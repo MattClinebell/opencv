@@ -1126,44 +1126,78 @@ struct EstimateDualVariablesBody : ParallelLoopBody
 
 void EstimateDualVariablesBody::operator() (const Range& range) const
 {
+#if CV_SSE2
+    Mat_<float> ux[2] = {u1x, u2x};
+    Mat_<float> uy[2] = {u1y, u2y};
+    Mat_<float> p1[2] = {p11, p21};
+    Mat_<float> p2[2] = {p12, p22};
+    const __m128 ones = _mm_set_ps1(1.0f);
+    const __m128 tauts = _mm_set_ps1(taut);
+    for (int i = 0; i < 2; i++)
+    {
+	    const int cols = ux[i].cols;
+	    for (int y = range.start; y < range.end; ++y)
+	    {
+		    const float* p_uxRow = &(ux[i][y][0]);
+		    const float* p_uyRow = &(uy[i][y][0]);
+		    float* p_p1Row = &(p1[i][y][0]);
+		    float* p_p2Row = &(p2[i][y][0]);
+		    int x = 0;
+		    for (; x < cols - 4; x += 4, p_uxRow += 4, p_uyRow += 4,
+			    p_p1Row += 4, p_p2Row += 4)
+		    {
+			    const __m128 hx = _mm_loadu_ps(p_uxRow);
+			    const __m128 hy = _mm_loadu_ps(p_uyRow);
+			    const __m128 t1 = _mm_mul_ps(hx, tauts);
+			    const __m128 t2 = _mm_mul_ps(hy, tauts);
+			    const __m128 hxSquare = _mm_mul_ps(hx, hx);
+			    const __m128 hySquare = _mm_mul_ps(hy, hy);
+			    const __m128 g = _mm_sqrt_ps(_mm_add_ps(hxSquare, hySquare));
+			    const __m128 ng = _mm_add_ps(ones, _mm_mul_ps(tauts, g));
+			    const __m128 p1d = _mm_loadu_ps(p_p1Row);
+			    const __m128 p2d = _mm_loadu_ps(p_p2Row);
+			    _mm_store_ps(p_p1Row, _mm_div_ps(_mm_add_ps(t1, p1d), ng));
+			    _mm_store_ps(p_p2Row, _mm_div_ps(_mm_add_ps(t2, p2d), ng));
+		    }
+		    for (; x < cols; x++, p_uxRow++, p_uyRow++, p_p1Row++, p_p2Row++)
+		    {
+			    const float xRowVal = *p_uxRow;
+			    const float yRowVal = *p_uyRow;
+			    const float g1 = sqrt((xRowVal * xRowVal) + (yRowVal * yRowVal));
+			    const float ng1  = 1.0f + taut * g1;
+			    *p_p1Row = (*p_p1Row + taut * xRowVal) / ng1;
+			    *p_p2Row = (*p_p2Row + taut * yRowVal) / ng1;
+		    }
+	    }
+    }
+#else
     for (int y = range.start; y < range.end; ++y)
     {
         const float* u1xRow = u1x[y];
         const float* u1yRow = u1y[y];
         const float* u2xRow = u2x[y];
         const float* u2yRow = u2y[y];
-        const float* u3xRow = u3x[y];
-        const float* u3yRow = u3y[y];
 
         float* p11Row = p11[y];
         float* p12Row = p12[y];
         float* p21Row = p21[y];
         float* p22Row = p22[y];
-        float* p31Row = p31[y];
-        float* p32Row = p32[y];
 
         for (int x = 0; x < u1x.cols; ++x)
         {
             const float g1 = static_cast<float>(hypot(u1xRow[x], u1yRow[x]));
             const float g2 = static_cast<float>(hypot(u2xRow[x], u2yRow[x]));
 
-            const float ng1  = 1.0f + taut * g1;
-            const float ng2 =  1.0f + taut * g2;
+		    const float ng1  = 1.0f + taut * g1;
+		    const float ng2  = 1.0f + taut * g2;
 
             p11Row[x] = (p11Row[x] + taut * u1xRow[x]) / ng1;
             p12Row[x] = (p12Row[x] + taut * u1yRow[x]) / ng1;
             p21Row[x] = (p21Row[x] + taut * u2xRow[x]) / ng2;
             p22Row[x] = (p22Row[x] + taut * u2yRow[x]) / ng2;
-
-            if (use_gamma)
-            {
-                const float g3 = static_cast<float>(hypot(u3xRow[x], u3yRow[x]));
-                const float ng3 = 1.0f + taut * g3;
-                p31Row[x] = (p31Row[x] + taut * u3xRow[x]) / ng3;
-                p32Row[x] = (p32Row[x] + taut * u3yRow[x]) / ng3;
-            }
         }
     }
+#endif
 }
 
 void estimateDualVariables(const Mat_<float>& u1x, const Mat_<float>& u1y,
